@@ -9,186 +9,193 @@ describe("NFTMarketplace Contract", function () {
   let owner;
   let seller;
   let buyer;
+  let anotherUser;
 
   beforeEach(async function () {
-    // Deploy NFT Minting Contract
+    // Deploy NFTMinting contract
     NFTMinting = await ethers.getContractFactory("NFTMinting");
-    nftMinting = await NFTMinting.deploy();
-
-    // Deploy NFT Marketplace Contract
     NFTMarketplace = await ethers.getContractFactory("NFTMarketplace");
-    nftMarketplace = await NFTMarketplace.deploy(nftMinting.target);
 
     // Get signers
-    [owner, seller, buyer] = await ethers.getSigners();
+    [owner, seller, buyer, anotherUser] = await ethers.getSigners();
 
-    // Create a collection and mint an NFT for testing
-    const collectionTx = await nftMinting.createCollection("Test Collection");
+    // Deploy NFTMinting contract
+    nftMinting = await NFTMinting.deploy();
+    
+    // Deploy NFTMarketplace contract with NFTMinting contract address
+    nftMarketplace = await NFTMarketplace.deploy(await nftMinting.getAddress());
+  });
+
+  // Helper function to create and mint an NFT
+  async function createAndMintNFT(creator, collectionName, nftName, price) {
+    // Create collection
+    const collectionTx = await nftMinting.connect(creator).createCollection(collectionName);
     const collectionReceipt = await collectionTx.wait();
     const collectionId = collectionReceipt.logs[0].args[0];
 
-    await nftMinting.mintNFT(collectionId, "Test NFT", ethers.parseEther("0.1"));
-  });
+    // Mint NFT
+    const mintTx = await nftMinting.connect(creator).mintNFT(collectionId, nftName, price);
+    const mintReceipt = await mintTx.wait();
+    const tokenId = mintReceipt.logs[0].args[0];
 
-  // Listing NFT Tests
-  describe("NFT Listing", function () {
-    it("Should list an NFT for sale", async function () {
-      const tokenId = 1; // First minted token
-      const listPrice = ethers.parseEther("0.2");
+    return { collectionId, tokenId };
+  }
 
-      // List the NFT
-      await nftMinting.approve(nftMarketplace.target, tokenId);
-      const tx = await nftMarketplace.connect(seller).listNFT(tokenId, listPrice);
-      const receipt = await tx.wait();
+  describe("Listing NFTs", function () {
+    let tokenId;
+    let nftPrice;
 
-      // Check NFTListed event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("NFTListed");
+    beforeEach(async function () {
+      nftPrice = ethers.parseEther("0.1");
+      const nftDetails = await createAndMintNFT(seller, "Test Collection", "Test NFT", nftPrice);
+      tokenId = nftDetails.tokenId;
+    });
 
-      // Verify listing details
+    it("Should list an NFT successfully", async function () {
+      const listingPrice = ethers.parseEther("0.2");
+      
+      await expect(nftMarketplace.connect(seller).listNFT(tokenId, listingPrice))
+        .to.emit(nftMarketplace, "NFTListed")
+        .withArgs(tokenId, listingPrice, seller.address);
+
       const listing = await nftMarketplace.listings(tokenId);
-      expect(listing.price).to.equal(listPrice);
+      expect(listing.price).to.equal(listingPrice);
       expect(listing.seller).to.equal(seller.address);
       expect(listing.isActive).to.be.true;
     });
 
-    it("Should prevent listing NFT below mint price", async function () {
-      const tokenId = 1;
-      const lowPrice = ethers.parseEther("0.05");
+    it("Should prevent listing an NFT by non-owner", async function () {
+      const listingPrice = ethers.parseEther("0.2");
+      
+      await expect(nftMarketplace.connect(buyer).listNFT(tokenId, listingPrice))
+        .to.be.revertedWith("Not token owner");
+    });
 
+    it("Should prevent listing an NFT below mint price", async function () {
+      const lowPrice = ethers.parseEther("0.05");
+      
       await expect(nftMarketplace.connect(seller).listNFT(tokenId, lowPrice))
         .to.be.revertedWith("Price cannot be less than mint price");
     });
-
-    it("Should allow canceling a listing", async function () {
-      const tokenId = 1;
-      const listPrice = ethers.parseEther("0.2");
-
-      // List the NFT
-      await nftMarketplace.connect(seller).listNFT(tokenId, listPrice);
-
-      // Cancel listing
-      const tx = await nftMarketplace.connect(seller).cancelListing(tokenId);
-      const receipt = await tx.wait();
-
-      // Check NFTListingDeleted event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("NFTListingDeleted");
-
-      // Verify listing is deleted
-      const listing = await nftMarketplace.listings(tokenId);
-      expect(listing.price).to.equal(0);
-    });
   });
 
-  // Buying NFT Tests
-  describe("NFT Buying", function () {
-    it("Should allow buying a listed NFT", async function () {
-      const tokenId = 1;
-      const listPrice = ethers.parseEther("0.2");
+  describe("Buying NFTs", function () {
+    let tokenId;
+    let nftPrice;
+    let listingPrice;
 
-      // List the NFT
-      await nftMarketplace.connect(seller).listNFT(tokenId, listPrice);
+    beforeEach(async function () {
+      nftPrice = ethers.parseEther("0.1");
+      const nftDetails = await createAndMintNFT(seller, "Test Collection", "Test NFT", nftPrice);
+      tokenId = nftDetails.tokenId;
+      
+      listingPrice = ethers.parseEther("0.2");
+      await nftMarketplace.connect(seller).listNFT(tokenId, listingPrice);
+    });
 
-      // Buy the NFT
-      const tx = await nftMarketplace.connect(buyer).buyNFT(tokenId, { value: listPrice });
-      const receipt = await tx.wait();
+    it("Should buy an NFT successfully", async function () {
+      const initialSellerBalance = await ethers.provider.getBalance(seller.address);
+      
+      await expect(nftMarketplace.connect(buyer).buyNFT(tokenId, { value: listingPrice }))
+        .to.emit(nftMarketplace, "NFTSold")
+        .withArgs(tokenId, listingPrice, buyer.address);
 
-      // Check NFTSold event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("NFTSold");
+      // Verify NFT ownership transfer
+      const nftDetails = await nftMinting.nfts(tokenId);
+      expect(nftDetails.owner).to.equal(buyer.address);
 
-      // Verify new ownership
-      const nftDetails = await nftMinting.getNFTsByOwner(buyer.address);
-      expect(nftDetails[0].tokenId).to.equal(tokenId);
+      // Verify seller received correct payment
+      const finalSellerBalance = await ethers.provider.getBalance(seller.address);
+      expect(finalSellerBalance).to.be.gt(initialSellerBalance);
     });
 
     it("Should prevent buying an unlisted NFT", async function () {
-      const tokenId = 1;
-      await expect(nftMarketplace.connect(buyer).buyNFT(tokenId, { value: ethers.parseEther("0.2") }))
+      // Cancel the listing first
+      await nftMarketplace.connect(seller).cancelListing(tokenId);
+
+      await expect(nftMarketplace.connect(buyer).buyNFT(tokenId, { value: listingPrice }))
         .to.be.revertedWith("NFT not listed for sale");
     });
   });
 
-  // Auction Tests
   describe("Auction Functionality", function () {
-    it("Should create an auction", async function () {
-      const tokenId = 1;
-      const startingBid = ethers.parseEther("0.2");
-      const duration = 86400; // 24 hours
+    let tokenId;
+    let nftPrice;
+    let startingBid;
 
-      const tx = await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, duration);
-      const receipt = await tx.wait();
-
-      // Check AuctionCreated event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("AuctionCreated");
-
-      // Verify auction details
-      const auction = await nftMarketplace.auctions(tokenId);
-      expect(auction.highestBid).to.equal(startingBid);
-      expect(auction.creator).to.equal(seller.address);
+    beforeEach(async function () {
+      nftPrice = ethers.parseEther("0.1");
+      const nftDetails = await createAndMintNFT(seller, "Test Collection", "Test NFT", nftPrice);
+      tokenId = nftDetails.tokenId;
+      
+      startingBid = ethers.parseEther("0.2");
     });
 
-    it("Should place a bid in an auction", async function () {
-      const tokenId = 1;
-      const startingBid = ethers.parseEther("0.2");
-      const duration = 86400;
+    it("Should create an auction successfully", async function () {
+      const auctionDuration = 24 * 60 * 60; // 24 hours
+      
+      await expect(nftMarketplace.connect(seller).createAuction(tokenId, startingBid, auctionDuration))
+        .to.emit(nftMarketplace, "AuctionCreated")
+        .withArgs(tokenId, startingBid, seller.address);
 
-      // Create auction
-      await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, duration);
-
-      // Place a higher bid
-      const bidAmount = ethers.parseEther("0.3");
-      const tx = await nftMarketplace.connect(buyer).placeBid(tokenId, { value: bidAmount });
-      const receipt = await tx.wait();
-
-      // Check BidPlaced event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("BidPlaced");
-
-      // Verify bid details
-      const auction = await nftMarketplace.auctions(tokenId);
-      expect(auction.highestBid).to.equal(bidAmount);
-      expect(auction.highestBidder).to.equal(buyer.address);
+      const auctionStatus = await nftMarketplace.checkAuctionStatus(tokenId);
+      expect(auctionStatus.active).to.be.true;
+      expect(auctionStatus.highestBid).to.equal(startingBid);
     });
 
-    it("Should finalize auction after end time", async function () {
-      const tokenId = 1;
-      const startingBid = ethers.parseEther("0.2");
-      const duration = 1; // Very short duration for testing
+    it("Should place a bid successfully", async function () {
+      const auctionDuration = 24 * 60 * 60; // 24 hours
+      await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, auctionDuration);
 
-      // Create auction
-      await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, duration);
+      const higherBid = ethers.parseEther("0.3");
+      
+      await expect(nftMarketplace.connect(buyer).placeBid(tokenId, { value: higherBid }))
+        .to.emit(nftMarketplace, "BidPlaced")
+        .withArgs(tokenId, higherBid, buyer.address);
 
-      // Place a bid
-      const bidAmount = ethers.parseEther("0.3");
-      await nftMarketplace.connect(buyer).placeBid(tokenId, { value: bidAmount });
+      const auctionStatus = await nftMarketplace.checkAuctionStatus(tokenId);
+      expect(auctionStatus.highestBid).to.equal(higherBid);
+      expect(auctionStatus.highestBidder).to.equal(buyer.address);
+    });
+
+    it("Should finalize auction successfully", async function () {
+      const auctionDuration = 1; // Very short duration for testing
+      await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, auctionDuration);
+
+      const higherBid = ethers.parseEther("0.3");
+      await nftMarketplace.connect(buyer).placeBid(tokenId, { value: higherBid });
 
       // Simulate time passing
       await ethers.provider.send("evm_increaseTime", [2]);
       await ethers.provider.send("evm_mine");
 
-      // Finalize auction
-      const tx = await nftMarketplace.connect(seller).finalizeAuction(tokenId);
-      const receipt = await tx.wait();
+      // Ensure the finalization emits the correct event
+  const finalizeTransaction = await nftMarketplace.connect(seller).finalizeAuction(tokenId);
+    await expect(finalizeTransaction)
+    .to.emit(nftMarketplace, "NFTSold")
+    .withArgs(tokenId, higherBid, buyer.address);
 
-      // Check NFTSold event
-      const event = receipt.logs[0];
-      expect(event.fragment.name).to.equal("NFTSold");
-
-      // Verify new ownership
-      const nftDetails = await nftMinting.getNFTsByOwner(buyer.address);
-      expect(nftDetails[0].tokenId).to.equal(tokenId);
+      // Verify NFT ownership transfer
+      const nftDetails = await nftMinting.nfts(tokenId);
+      expect(nftDetails.owner).to.equal(buyer.address);
     });
   });
 
-  // Ownership Verification
-  describe("NFT Ownership Verification", function () {
+  describe("Ownership and Verification", function () {
+    let tokenId;
+
+    beforeEach(async function () {
+      const nftPrice = ethers.parseEther("0.1");
+      const nftDetails = await createAndMintNFT(seller, "Test Collection", "Test NFT", nftPrice);
+      tokenId = nftDetails.tokenId;
+    });
+
     it("Should verify NFT ownership correctly", async function () {
-      const tokenId = 1;
       const isOwner = await nftMarketplace.verifyNFTOwnership(tokenId, seller.address);
       expect(isOwner).to.be.true;
+
+      const isNotOwner = await nftMarketplace.verifyNFTOwnership(tokenId, buyer.address);
+      expect(isNotOwner).to.be.false;
     });
   });
 });

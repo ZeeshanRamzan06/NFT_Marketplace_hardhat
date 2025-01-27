@@ -1,4 +1,4 @@
-    // SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: MIT
     pragma solidity ^0.8.0;
     contract NFTMinting {
 
@@ -57,8 +57,11 @@
             _;
         }
 
-       
-
+        /**
+         * @dev Generates a unique random collection ID using block data and sender address
+         * @param sender The address of the collection creator
+         * @return A random number between 1 and 10000000
+         */
         function generateRandomCollectionId(address sender) private view returns (uint256) {
             return uint256(
                 keccak256(
@@ -72,6 +75,11 @@
             ) % 10000000 + 1;
         }
         
+        /**
+         * @dev Generates a unique random token ID for NFT minting
+         * @param sender The address of the NFT minter
+         * @return A random number less than 100000000000000
+         */
         function generateRandomTokenId(address sender) private view returns (uint256) {
             return uint256(
                 keccak256(
@@ -85,6 +93,11 @@
             ) % 100000000000000;
         }
         
+        /**
+         * @dev Creates a new NFT collection with a unique ID and name
+         * @param _name The name of the collection to create
+         * @return The ID of the newly created collection
+         */
         function createCollection(string calldata _name) public returns (uint256) {
             require(bytes(_name).length > 0, "Name cannot be empty");
             require(bytes(_name).length <= MAX_NAME_LENGTH, "Name is too long");
@@ -120,7 +133,11 @@
             return collectionId;
         }
 
-
+        /**
+         * @dev Retrieves all collections created by a specific address
+         * @param _creator The address of the collection creator
+         * @return An array of Collection structs
+         */
         function getCreatorCollections(address _creator) public view returns (Collection[] memory) {
             uint256[] memory collectionIds = creatorCollections[_creator];
             Collection[] memory result = new Collection[](collectionIds.length);
@@ -132,6 +149,13 @@
             return result;
         }
 
+        /**
+         * @dev Mints a new NFT in a specified collection with a price
+         * @param _collectionId The ID of the collection to mint the NFT in
+         * @param _name The name of the NFT
+         * @param _price The initial price of the NFT
+         * @return The ID of the newly minted NFT
+         */
         function mintNFT(uint256 _collectionId, string calldata _name ,uint256 _price) public returns (uint256) {
             require(collections[_collectionId].exists, "Invalid collection ID");
             require(bytes(_name).length > 0, "Name cannot be empty");
@@ -171,6 +195,11 @@
             return newTokenId;
         }
         
+        /**
+         * @dev Gets all NFTs owned by a specific address
+         * @param _owner The address of the NFT owner
+         * @return An array of NFTDetails structs containing NFT information
+         */
         function getNFTsByOwner(address _owner) public view returns (NFTDetails[] memory) {
             uint256[] memory tokenIds = userNFTs[_owner];
             NFTDetails[] memory details = new NFTDetails[](tokenIds.length);
@@ -192,6 +221,11 @@
             return details;
         }
         
+        /**
+         * @dev Gets all NFTs in a specific collection
+         * @param _collection The address of the collection creator
+         * @return An array of NFTDetails structs containing NFT information
+         */
         function getNFTsByCollection(address _collection) public view returns (NFTDetails[] memory) {
             uint256[] memory tokenIds = collectionNFTs[_collection];
             NFTDetails[] memory details = new NFTDetails[](tokenIds.length);
@@ -213,8 +247,11 @@
             return details;
         }
 
-       
-    
+        /**
+         * @dev Transfers an NFT from current owner to a new owner
+         * @param _tokenId The ID of the NFT to transfer
+         * @param _newOwner The address of the new owner
+         */
         function transferNFT(uint256 _tokenId, address _newOwner) external  {
             NFT storage nft = nfts[_tokenId];
             address previousOwner = nft.owner;
@@ -233,6 +270,11 @@
             emit NFTTransferred(_tokenId, previousOwner, _newOwner);
         }
 
+        /**
+         * @dev Checks if a token ID exists in the contract
+         * @param _tokenId The ID of the token to check
+         * @return bool indicating if the token exists
+         */
         function tokenExists(uint256 _tokenId) public view returns (bool) {
             return nfts[_tokenId].tokenId != 0;
         }

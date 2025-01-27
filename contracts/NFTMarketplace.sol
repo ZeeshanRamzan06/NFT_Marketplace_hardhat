@@ -67,6 +67,11 @@ contract NFTMarketplace {
         _;
     }
 
+    /**
+     * @dev Lists an NFT for sale in the marketplace
+     * @param _tokenId The ID of the NFT to list
+     * @param _price The listing price in wei
+     */
     function listNFT(uint256 _tokenId, uint256 _price) 
         external 
         tokenExists(_tokenId) 
@@ -85,53 +90,69 @@ contract NFTMarketplace {
         });
         emit NFTListed(_tokenId, _price, msg.sender);
     }
-    // This function able to delete nft listing
+
+    /**
+     * @dev Cancels an active NFT listing
+     * @param _tokenId The ID of the NFT to delist
+     */
     function cancelListing(uint256 _tokenId) external onlyTokenOwner(_tokenId) {
         require(listings[_tokenId].price > 0, "NFT not listed");
         delete listings[_tokenId];
         emit NFTListingDeleted(_tokenId, msg.sender);
     }
 
-    // This function is for buyer to buy nft
- function buyNFT(uint256 _tokenId) external payable tokenExists(_tokenId) {
-    Listing memory listing = listings[_tokenId];
-     require(listing.isActive, "NFT not listed for sale");
-    (, , , , , uint256 mintPrice) = nftMintingContract.nfts(_tokenId);
-    require(listing.price >= mintPrice, "Listed price below mint price");
-    require(listing.price > 0, "NFT not listed for sale");
-    require(msg.value >= listing.price, "Insufficient payment amount");
+    /**
+     * @dev Allows a user to purchase a listed NFT
+     * @param _tokenId The ID of the NFT to purchase
+     */
+    function buyNFT(uint256 _tokenId) external payable tokenExists(_tokenId) {
+        Listing memory listing = listings[_tokenId];
+        require(listing.isActive, "NFT not listed for sale");
+        (, , , , , uint256 mintPrice) = nftMintingContract.nfts(_tokenId);
+        require(listing.price >= mintPrice, "Listed price below mint price");
+        require(listing.price > 0, "NFT not listed for sale");
+        require(msg.value >= listing.price, "Insufficient payment amount");
 
-    // Refund any excess amount first
-    if (msg.value > listing.price) {
-        uint256 excessAmount = msg.value - listing.price;
-        payable(msg.sender).transfer(excessAmount);
+        // Refund any excess amount first
+        if (msg.value > listing.price) {
+            uint256 excessAmount = msg.value - listing.price;
+            payable(msg.sender).transfer(excessAmount);
+        }
+
+        // Transfer payment to seller
+        payable(listing.seller).transfer(listing.price);
+
+        // Transfer the NFT to the buyer
+        nftMintingContract.transferNFT(_tokenId, msg.sender);
+
+        // Delete the listing after successful transaction
+        delete listings[_tokenId];
+
+        emit NFTSold(_tokenId, listing.price, msg.sender);
     }
 
-    // Transfer payment to seller
-    payable(listing.seller).transfer(listing.price);
-
-    // Transfer the NFT to the buyer
-    nftMintingContract.transferNFT(_tokenId, msg.sender);
-
-    // Delete the listing after successful transaction
-    delete listings[_tokenId];
-
-    emit NFTSold(_tokenId, listing.price, msg.sender);
-}
-
-
-
-// this function verify who is current owner of nft
+    /**
+     * @dev Verifies if an address is the owner of a specific NFT
+     * @param _tokenId The ID of the NFT to check
+     * @param _owner The address to verify ownership for
+     * @return bool indicating if the address owns the NFT
+     */
     function verifyNFTOwnership(uint256 _tokenId, address _owner) 
-    external 
-    view 
-    tokenExists(_tokenId) 
-    returns (bool) 
-{
-    (, , ,  address tokenOwner, , ) = nftMintingContract.nfts(_tokenId);
-    return tokenOwner == _owner;
-}
-// This function create auction 
+        external 
+        view 
+        tokenExists(_tokenId) 
+        returns (bool) 
+    {
+        (, , ,  address tokenOwner, , ) = nftMintingContract.nfts(_tokenId);
+        return tokenOwner == _owner;
+    }
+
+    /**
+     * @dev Creates a new auction for an NFT
+     * @param _tokenId The ID of the NFT to auction
+     * @param _startingBid The minimum bid price
+     * @param _duration The duration of the auction in seconds
+     */
     function createAuction(uint256 _tokenId, uint256 _startingBid, uint256 _duration) 
         external 
         tokenExists(_tokenId) 
@@ -154,7 +175,11 @@ contract NFTMarketplace {
 
         emit AuctionCreated(_tokenId, _startingBid, msg.sender);
     }
-// this function for ending auction 
+
+    /**
+     * @dev Ends an active auction before its natural end time
+     * @param _tokenId The ID of the NFT being auctioned
+     */
     function endAuction(uint256 _tokenId) external tokenExists(_tokenId) {
         Auction storage auction = auctions[_tokenId];
         require(auction.active, "Auction is not active");
@@ -166,78 +191,97 @@ contract NFTMarketplace {
 
         emit AuctionEnded(_tokenId, msg.sender);
     }
-// This function is for placing bid
+
+    /**
+     * @dev Places a bid on an active auction
+     * @param _tokenId The ID of the NFT being auctioned
+     */
     function placeBid(uint256 _tokenId) external payable tokenExists(_tokenId) {
-    Auction storage auction = auctions[_tokenId];
-    require(auction.active, "Auction is not active");
-    (, , , , , uint256 originalPrice) = nftMintingContract.nfts(_tokenId);
-    require(msg.value >= originalPrice, "Bid must be at least the original price");
-    require(msg.value > auction.highestBid, "Bid must be higher than the current highest bid");
+        Auction storage auction = auctions[_tokenId];
+        require(auction.active, "Auction is not active");
+        (, , , , , uint256 originalPrice) = nftMintingContract.nfts(_tokenId);
+        require(msg.value >= originalPrice, "Bid must be at least the original price");
+        require(msg.value > auction.highestBid, "Bid must be higher than the current highest bid");
 
-    if (block.timestamp >= auction.endTime) {
-        // Finalize the auction automatically
-        auction.active = false;
+        if (block.timestamp >= auction.endTime) {
+            // Finalize the auction automatically
+            auction.active = false;
 
-        if (auction.highestBidder != address(0)) {
-            // Transfer funds to the auction creator
-            payable(auction.creator).transfer(auction.highestBid);
-            // Transfer NFT ownership to the highest bidder
-            nftMintingContract.transferNFT(_tokenId, auction.highestBidder);
+            if (auction.highestBidder != address(0)) {
+                // Transfer funds to the auction creator
+                payable(auction.creator).transfer(auction.highestBid);
+                // Transfer NFT ownership to the highest bidder
+                nftMintingContract.transferNFT(_tokenId, auction.highestBidder);
 
-            emit NFTSold(_tokenId, auction.highestBid, auction.highestBidder);
-        } else {
-            // If no bids were placed, the auction ends without transferring ownership
-            emit AuctionEnded(_tokenId, msg.sender);
-        }
+                emit NFTSold(_tokenId, auction.highestBid, auction.highestBidder);
+            } else {
+                // If no bids were placed, the auction ends without transferring ownership
+                emit AuctionEnded(_tokenId, msg.sender);
+            }
             delete auctions[_tokenId];
 
-        return;
-    }
-    // Refund previous highest bidder
-    if (auction.highestBidder != address(0)) {
-        payable(auction.highestBidder).transfer(auction.highestBid);
-    }
-     
-    auction.highestBid = msg.value;
-    auction.highestBidder = msg.sender;
-
-    emit BidPlaced(_tokenId, msg.value, msg.sender);
-}
-
-
-// Using this function we check status of auction 
-function checkAuctionStatus(uint256 _tokenId) public view tokenExists(_tokenId) returns (bool active, uint256 highestBid, address highestBidder, uint256 timeRemaining) {
-    Auction memory auction = auctions[_tokenId];
-    active = auction.active && block.timestamp < auction.endTime;
-    highestBid = auction.highestBid;
-    highestBidder = auction.highestBidder;
-    timeRemaining = block.timestamp < auction.endTime ? auction.endTime - block.timestamp : 0;
-}
-// Finalize Auction Function
-function finalizeAuction(uint256 _tokenId) external tokenExists(_tokenId) {
-    Auction storage auction = auctions[_tokenId];
-    require(block.timestamp >= auction.endTime, "Auction is still ongoing");
-    require(auction.active, "Auction is not active"); // Uncommented this line
-    
-    uint256 highestBid = auction.highestBid;
-    address highestBidder = auction.highestBidder;
-    
-    // Set auction to inactive before making transfers (prevent reentrancy)
-    auction.active = false;
-    
-    if (highestBidder != address(0)) {
-        // Transfer funds to the auction creator
-        payable(auction.creator).transfer(highestBid);
+            return;
+        }
+        // Refund previous highest bidder
+        if (auction.highestBidder != address(0)) {
+            payable(auction.highestBidder).transfer(auction.highestBid);
+        }
         
-        // Transfer NFT ownership
-        nftMintingContract.transferNFT(_tokenId, highestBidder);
-        
-        emit NFTSold(_tokenId, highestBid, highestBidder);
-    } else {
-        // No bids, auction ends without a sale
-        emit AuctionEnded(_tokenId, auction.creator); // Changed event name to be more specific
+        auction.highestBid = msg.value;
+        auction.highestBidder = msg.sender;
+
+        emit BidPlaced(_tokenId, msg.value, msg.sender);
     }
-    
-    delete auctions[_tokenId];
-}
+
+    /**
+     * @dev Checks the current status of an auction
+     * @param _tokenId The ID of the NFT being auctioned
+     * @return active Whether the auction is still active
+     * @return highestBid The current highest bid
+     * @return highestBidder The address of the highest bidder
+     * @return timeRemaining Time left in the auction
+     */
+    function checkAuctionStatus(uint256 _tokenId) public view tokenExists(_tokenId) returns (
+        bool active, 
+        uint256 highestBid, 
+        address highestBidder, 
+        uint256 timeRemaining
+    ) {
+        Auction memory auction = auctions[_tokenId];
+        active = auction.active && block.timestamp < auction.endTime;
+        highestBid = auction.highestBid;
+        highestBidder = auction.highestBidder;
+        timeRemaining = block.timestamp < auction.endTime ? auction.endTime - block.timestamp : 0;
+    }
+
+    /**
+     * @dev Finalizes an auction after its end time
+     * @param _tokenId The ID of the NFT being auctioned
+     */
+    function finalizeAuction(uint256 _tokenId) external tokenExists(_tokenId) {
+        Auction storage auction = auctions[_tokenId];
+        require(block.timestamp >= auction.endTime, "Auction is still ongoing");
+        require(auction.active, "Auction is not active"); // Added this check to prevent reentrancy
+        
+        uint256 highestBid = auction.highestBid;
+        address highestBidder = auction.highestBidder;
+        
+        // Set auction to inactive before making transfers 
+        auction.active = false;
+        
+        if (highestBidder != address(0)) {
+            // Transfer funds to the auction creator
+            payable(auction.creator).transfer(highestBid);
+            
+            // Transfer NFT ownership
+            nftMintingContract.transferNFT(_tokenId, highestBidder);
+            
+            emit NFTSold(_tokenId, highestBid, highestBidder);
+        } else {
+            // No bids, auction ends without a sale
+            emit AuctionEnded(_tokenId, auction.creator); 
+        }
+        
+        delete auctions[_tokenId];
+    }
 }

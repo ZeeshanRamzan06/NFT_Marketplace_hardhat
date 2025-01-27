@@ -213,32 +213,31 @@ function checkAuctionStatus(uint256 _tokenId) public view tokenExists(_tokenId) 
     highestBidder = auction.highestBidder;
     timeRemaining = block.timestamp < auction.endTime ? auction.endTime - block.timestamp : 0;
 }
-// This function we use to finalize the Auction 
-    function finalizeAuction(uint256 _tokenId) external tokenExists(_tokenId) {
+// Finalize Auction Function
+function finalizeAuction(uint256 _tokenId) external tokenExists(_tokenId) {
     Auction storage auction = auctions[_tokenId];
     require(block.timestamp >= auction.endTime, "Auction is still ongoing");
-    // require(auction.active, "Auction is not active");
-
-
+    require(auction.active, "Auction is not active"); // Uncommented this line
+    
     uint256 highestBid = auction.highestBid;
     address highestBidder = auction.highestBidder;
     
+    // Set auction to inactive before making transfers (prevent reentrancy)
     auction.active = false;
-
-    if (auction.highestBidder != address(0)) {
+    
+    if (highestBidder != address(0)) {
         // Transfer funds to the auction creator
-        payable(auction.creator).transfer(auction.highestBid);
-
+        payable(auction.creator).transfer(highestBid);
+        
         // Transfer NFT ownership
-        nftMintingContract.transferNFT(_tokenId, auction.highestBidder);
+        nftMintingContract.transferNFT(_tokenId, highestBidder);
         
         emit NFTSold(_tokenId, highestBid, highestBidder);
     } else {
         // No bids, auction ends without a sale
-        emit AuctionCreated(_tokenId, 0, auction.creator);
+        emit AuctionEnded(_tokenId, auction.creator); // Changed event name to be more specific
     }
-
+    
     delete auctions[_tokenId];
 }
-
 }

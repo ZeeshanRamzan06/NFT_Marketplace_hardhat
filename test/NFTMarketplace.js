@@ -159,26 +159,53 @@ describe("NFTMarketplace Contract", function () {
     });
 
     it("Should finalize auction successfully", async function () {
-      const auctionDuration = 1; // Very short duration for testing
+      // Create auction
+      const auctionDuration = 60; // Increased duration to ensure enough time
       await nftMarketplace.connect(seller).createAuction(tokenId, startingBid, auctionDuration);
-
+      
+      // Place bid
       const higherBid = ethers.parseEther("0.3");
       await nftMarketplace.connect(buyer).placeBid(tokenId, { value: higherBid });
-
+      
+      // Verify bid was placed correctly
+      const auctionBefore = await nftMarketplace.auctions(tokenId);
+      expect(auctionBefore.highestBidder).to.equal(buyer.address);
+      expect(auctionBefore.highestBid).to.equal(higherBid);
+      
       // Simulate time passing
-      await ethers.provider.send("evm_increaseTime", [2]);
+      await ethers.provider.send("evm_increaseTime", [auctionDuration + 1]);
       await ethers.provider.send("evm_mine");
-
-      // Ensure the finalization emits the correct event
-  const finalizeTransaction = await nftMarketplace.connect(seller).finalizeAuction(tokenId);
-    await expect(finalizeTransaction)
-    .to.emit(nftMarketplace, "NFTSold")
-    .withArgs(tokenId, higherBid, buyer.address);
-
+      
+      // Get balances before finalization
+      const sellerBalanceBefore = await ethers.provider.getBalance(seller.address);
+      
+      // Finalize auction
+      const finalizeTransaction = await nftMarketplace.connect(seller).finalizeAuction(tokenId);
+      
+      // Verify event emission
+      await expect(finalizeTransaction)
+          .to.emit(nftMarketplace, "NFTSold")
+          .withArgs(tokenId, higherBid, buyer.address);
+      
       // Verify NFT ownership transfer
       const nftDetails = await nftMinting.nfts(tokenId);
       expect(nftDetails.owner).to.equal(buyer.address);
-    });
+      
+      // Verify seller received payment
+      const sellerBalanceAfter = await ethers.provider.getBalance(seller.address);
+      const balanceDifference = sellerBalanceAfter - sellerBalanceBefore;
+    
+      // The seller spent gas to call finalizeAuction
+      const txReceipt = await finalizeTransaction.wait();
+      const gasCost = txReceipt.gasUsed * txReceipt.gasPrice;
+      
+      // The actual balance increase should be the bid amount minus gas costs
+      const expectedIncrease = higherBid - gasCost;
+      
+      // Use a threshold for comparison due to gas costs
+      const isBalanceCorrect = balanceDifference >= expectedIncrease;
+      expect(isBalanceCorrect).to.be.true;
+  });
   });
 
   describe("Ownership and Verification", function () {
